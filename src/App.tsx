@@ -7,8 +7,8 @@ import { DailyReportView } from './components/DailyReportView';
 import { AdminPanel } from './components/AdminPanel';
 import { AuthModal } from './components/AuthModal';
 import { InvoiceModal } from './components/InvoiceModal';
-import { AuthState, InventoryItem, Sale, TableSession, UserRole } from './types';
-import { DEFAULT_AUTH, INITIAL_INVENTORY, INITIAL_TABLES } from './utils/constants';
+import { AuthState, GranizadoSizeConfig, InventoryItem, Sale, TableSession, UserRole } from './types';
+import { DEFAULT_AUTH, INITIAL_INVENTORY, INITIAL_TABLES, SIZE_CONFIGS } from './utils/constants';
 import { SEED_SALES } from './utils/seedData';
 import {
   applyInventoryDeduction,
@@ -23,7 +23,8 @@ const STORAGE_KEYS = {
   SALES: 'ice_granizados_sales_v1',
   AUTH: 'ice_granizados_auth_v1',
   SOUND: 'ice_granizados_sound_v1',
-  TABLES: 'ice_granizados_tables_v1',
+  TABLES: 'ice_granizados_cuentas_v2',
+  PRICES: 'ice_granizados_prices_v1',
 };
 
 export default function App() {
@@ -55,18 +56,35 @@ export default function App() {
     return SEED_SALES;
   });
 
-  // 3. Tables Session State (5 default tables + dynamic tables)
+  // 3. Named Accounts / Customer Sessions State
   const [tables, setTables] = useState<TableSession[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.TABLES);
-      if (stored) return JSON.parse(stored);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const isLegacyNumbered = parsed.every((t: any) => /^Mesa \d+$/i.test(t.name));
+          if (!isLegacyNumbered) return parsed;
+        }
+      }
     } catch {
       // fallback
     }
     return INITIAL_TABLES;
   });
 
-  // 4. Auth State with LocalStorage (initial page is Login unless stored or autostart)
+  // 4. Base Cup Sizes and Dynamic Prices (12oz, 14oz, 16oz editable by Admin)
+  const [sizeConfigs, setSizeConfigs] = useState<Record<string, GranizadoSizeConfig>>(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.PRICES);
+      if (stored) return JSON.parse(stored);
+    } catch {
+      // fallback
+    }
+    return SIZE_CONFIGS;
+  });
+
+  // 5. Auth State with LocalStorage (initial page is Login unless stored or autostart)
   const [auth, setAuth] = useState<AuthState>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.AUTH);
@@ -135,6 +153,69 @@ export default function App() {
     }
   }, [auth.currentRole, activeTab]);
 
+  // 1. Initial Cloud SQL database fetch on mount
+  useEffect(() => {
+    let isMounted = true;
+    const fetchCloudSQLData = async () => {
+      try {
+        const resPrices = await fetch('/api/price-configs');
+        if (resPrices.ok) {
+          const data = await resPrices.json();
+          if (Array.isArray(data) && data.length > 0 && isMounted) {
+            const mapped: Record<string, GranizadoSizeConfig> = { ...SIZE_CONFIGS };
+            data.forEach((row: any) => {
+              if (row.size && mapped[row.size]) {
+                mapped[row.size] = {
+                  ...mapped[row.size],
+                  price: row.price,
+                  costEstimate: row.costEstimate || mapped[row.size].costEstimate,
+                };
+              }
+            });
+            setSizeConfigs(mapped);
+          }
+        }
+      } catch {
+        // network or server loading fallback
+      }
+
+      try {
+        const resInv = await fetch('/api/inventory');
+        if (resInv.ok) {
+          const inv = await resInv.json();
+          if (Array.isArray(inv) && inv.length > 0 && isMounted) {
+            setInventory(inv);
+          }
+        }
+      } catch {}
+
+      try {
+        const resSales = await fetch('/api/sales');
+        if (resSales.ok) {
+          const s = await resSales.json();
+          if (Array.isArray(s) && s.length > 0 && isMounted) {
+            setSales(s);
+          }
+        }
+      } catch {}
+
+      try {
+        const resTables = await fetch('/api/tables');
+        if (resTables.ok) {
+          const t = await resTables.json();
+          if (Array.isArray(t) && t.length > 0 && isMounted) {
+            setTables(t);
+          }
+        }
+      } catch {}
+    };
+
+    fetchCloudSQLData();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Persistence effects
   useEffect(() => {
     try {
@@ -162,6 +243,14 @@ export default function App() {
 
   useEffect(() => {
     try {
+      localStorage.setItem(STORAGE_KEYS.PRICES, JSON.stringify(sizeConfigs));
+    } catch {
+      // storage failed
+    }
+  }, [sizeConfigs]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem(STORAGE_KEYS.AUTH, JSON.stringify(auth));
     } catch {
       // storage failed
@@ -186,12 +275,26 @@ export default function App() {
     // 1. Add to sales history
     setSales((prev) => [newSale, ...prev]);
 
+    // Sync sale to Cloud SQL
+    fetch('/api/sales', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newSale),
+    }).catch((err) => console.error('Cloud SQL sales sync error:', err));
+
     // 2. Automatically apply inventory deduction
     const { updatedInventory, depletedItems } = applyInventoryDeduction(
       inventory,
       deductions
     );
     setInventory(updatedInventory);
+
+    // Sync deducted inventory to Cloud SQL
+    fetch('/api/inventory/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: updatedInventory }),
+    }).catch((err) => console.error('Cloud SQL inventory sync error:', err));
 
     if (depletedItems.length > 0) {
       setTimeout(() => {
@@ -221,7 +324,32 @@ export default function App() {
       )
     );
 
+    // Sync annulment and reverted inventory to Cloud SQL
+    fetch(`/api/sales/${saleId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'anulada', reason: 'Anulada por Administrador' }),
+    }).catch((err) => console.error('Cloud SQL annul sync error:', err));
+
+    fetch('/api/inventory/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: revertedInventory }),
+    }).catch((err) => console.error('Cloud SQL inventory revert sync error:', err));
+
     showToast(`Factura ${targetSale.invoiceNumber} anulada. Insumos devueltos al inventario.`);
+  };
+
+  // Delete an open account session (local + Cloud SQL sync)
+  const handleDeleteTable = (tableId: string) => {
+    sounds.playClick();
+    setTables((prev) => prev.filter((t) => t.id !== tableId));
+
+    fetch(`/api/tables/${tableId}`, {
+      method: 'DELETE',
+    }).catch((err) => console.error('Error deleting table from Cloud SQL:', err));
+
+    showToast('Cuenta cerrada y eliminada.');
   };
 
   // Open Auth Modal for switching roles while logged in
@@ -267,6 +395,9 @@ export default function App() {
     setSales(SEED_SALES);
     setTables(INITIAL_TABLES);
     setAuth(DEFAULT_AUTH);
+    fetch('/api/sales/reset', { method: 'POST' }).catch((err) =>
+      console.error('Failed to reset Cloud SQL sales:', err)
+    );
   };
 
   // If user is NOT authenticated, display initial Login Screen!
@@ -309,11 +440,13 @@ export default function App() {
               inventory={inventory}
               tables={tables}
               onUpdateTables={setTables}
+              onDeleteTable={handleDeleteTable}
               onCompleteSale={handleCompleteSale}
               currentRole={auth.currentRole}
               cashierName={auth.currentRole === 'administrador' ? auth.adminName : auth.employeeName}
               existingSales={sales}
               onViewInvoice={(sale) => setViewingInvoice(sale)}
+              sizeConfigs={sizeConfigs}
             />
           )}
 
@@ -344,6 +477,8 @@ export default function App() {
               onUpdateInventory={setInventory}
               sales={sales}
               onResetData={handleResetData}
+              sizeConfigs={sizeConfigs}
+              onUpdateSizeConfigs={setSizeConfigs}
             />
           )}
         </main>

@@ -47,6 +47,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setError(null);
   };
 
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key >= '0' && e.key <= '9') {
+        sounds.playClick();
+        setPin((prev) => (prev.length < 8 ? prev + e.key : prev));
+        setError(null);
+      } else if (e.key === 'Backspace') {
+        sounds.playClick();
+        setPin((prev) => prev.slice(0, -1));
+        setError(null);
+      } else if (e.key === 'Enter') {
+        handleSubmit();
+      } else if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [pin, selectedRole, auth]);
+
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 

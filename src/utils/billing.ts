@@ -24,9 +24,10 @@ export function formatCOP(amount: number): string {
  */
 export function calculateItemUnitPrice(
   size: GranizadoSize,
-  toppings: Array<{ price: number }>
+  toppings: Array<{ price: number }>,
+  sizeConfigs?: Record<string, { price: number }>
 ): number {
-  const basePrice = SIZE_CONFIGS[size]?.price ?? 12000;
+  const basePrice = sizeConfigs?.[size]?.price ?? SIZE_CONFIGS[size]?.price ?? 12000;
   const toppingsTotal = toppings.reduce((sum, top) => sum + top.price, 0);
   return basePrice + toppingsTotal;
 }
@@ -52,9 +53,10 @@ export function calculateCartSummary(
  */
 export function calculateItemCostEstimate(
   size: GranizadoSize,
-  toppings: Array<{ id: string }>
+  toppings: Array<{ id: string }>,
+  sizeConfigs?: Record<string, { costEstimate?: number } | any>
 ): number {
-  const baseCost = SIZE_CONFIGS[size]?.costEstimate ?? 3200;
+  const baseCost = sizeConfigs?.[size]?.costEstimate ?? SIZE_CONFIGS[size]?.costEstimate ?? 3200;
   // Estimate ~500 COP cost per topping
   const toppingsCost = toppings.length * 500;
   return baseCost + toppingsCost;
@@ -400,3 +402,42 @@ export function calculateAccumulatedMetrics(sales: Sale[]) {
         : 0,
   };
 }
+
+export interface OpenAccountsSummary {
+  totalAccounts: number;
+  activeAccountsWithOrders: number;
+  totalPendingAmount: number;
+  totalPendingGranizados: number;
+}
+
+/**
+ * Calculates metrics for all open accounts / customer sessions
+ */
+export function calculateOpenAccountsSummary(
+  tables: Array<{ cart: Array<{ unitPrice: number; quantity: number }> }>
+): OpenAccountsSummary {
+  let activeAccountsWithOrders = 0;
+  let totalPendingAmount = 0;
+  let totalPendingGranizados = 0;
+
+  for (const table of tables) {
+    const itemCount = table.cart.reduce((sum, item) => sum + item.quantity, 0);
+    const cartTotal = table.cart.reduce(
+      (sum, item) => sum + item.unitPrice * item.quantity,
+      0
+    );
+    if (itemCount > 0) {
+      activeAccountsWithOrders += 1;
+    }
+    totalPendingGranizados += itemCount;
+    totalPendingAmount += cartTotal;
+  }
+
+  return {
+    totalAccounts: tables.length,
+    activeAccountsWithOrders,
+    totalPendingAmount,
+    totalPendingGranizados,
+  };
+}
+

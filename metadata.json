@@ -2,5 +2,7 @@
   "name": "ICE GRANIZADOS - Sistema de Facturación e Inventario",
   "description": "Sistema POS de facturación, gestión automatizada de insumos, reporte diario de ventas y panel administrativo con control de accesos para ICE GRANIZADOS.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

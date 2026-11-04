@@ -278,10 +278,6 @@ export const DEFAULT_AUTH = {
 };
 
 export const INITIAL_TABLES: Array<{ id: string; name: string; cart: any[]; customerName?: string }> = [
-  { id: 'mesa-1', name: 'Mesa 1', cart: [] },
-  { id: 'mesa-2', name: 'Mesa 2', cart: [] },
-  { id: 'mesa-3', name: 'Mesa 3', cart: [] },
-  { id: 'mesa-4', name: 'Mesa 4', cart: [] },
-  { id: 'mesa-5', name: 'Mesa 5', cart: [] },
-  { id: 'para-llevar', name: 'Para Llevar / Mostrador', cart: [] },
+  { id: 'cuenta-mostrador', name: 'Mostrador / General', cart: [] },
+  { id: 'cuenta-cliente-1', name: 'Cliente: Juan Carlos', cart: [] },
 ];

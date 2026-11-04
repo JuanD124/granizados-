@@ -65,46 +65,86 @@ export const DailyReportView: React.FC<DailyReportViewProps> = ({
   const totalExpectedCash = openingFloat + summary.cashExpected;
   const cashDifference = actualCashCounted - totalExpectedCash;
 
-  // Export day sales to CSV (Admin only)
-  const handleExportCSV = () => {
+  // Helper to generate and download Excel-compatible CSV with UTF-8 BOM
+  const exportSalesToCSV = (salesList: Sale[], filename: string) => {
     sounds.playClick();
     const headers = [
       'Factura',
+      'Fecha',
       'Hora',
       'Cajero',
+      'Rol',
+      'Mesa / Ubicación',
       'Cliente',
-      'Items',
-      'Subtotal',
-      'Descuento',
-      'Total',
-      'MedioPago',
+      'Cantidad Vasos',
+      'Detalle Granizados',
+      'Subtotal COP',
+      'Descuento COP',
+      'Total Cobrado COP',
+      'Medio de Pago',
+      'Monto Recibido COP',
+      'Cambio / Vueltos COP',
+      'Costo Insumos Estimado COP',
+      'Ganancia Estimada COP',
       'Estado',
+      'Motivo Anulación',
     ];
 
-    const rows = daySales.map((s) => [
-      s.invoiceNumber,
-      new Date(s.createdAt).toLocaleTimeString('es-CO'),
-      `"${s.cashierName}"`,
-      `"${s.customerName || 'Consumidor Final'}"`,
-      `"${s.items.map((i) => `${i.quantity}x ${i.size} ${i.flavorName}`).join('; ')}"`,
-      s.subtotal,
-      s.discount,
-      s.total,
-      s.paymentMethod,
-      s.status,
-    ]);
+    const rows = salesList.map((s) => {
+      const dateObj = new Date(s.createdAt);
+      const fecha = isNaN(dateObj.getTime()) ? s.createdAt.slice(0, 10) : dateObj.toLocaleDateString('es-CO');
+      const hora = isNaN(dateObj.getTime()) ? '' : dateObj.toLocaleTimeString('es-CO');
+      const totalCups = s.items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+      const itemsDetail = s.items
+        .map((i) => {
+          const mix = i.secondaryFlavorName ? ` + ${i.secondaryFlavorName}` : '';
+          const tops = i.toppings && i.toppings.length ? ` (Toppings: ${i.toppings.map((t) => t.name).join(', ')})` : '';
+          return `${i.quantity}x ${i.size} ${i.flavorName}${mix}${tops}`;
+        })
+        .join('; ');
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+      return [
+        `"${s.invoiceNumber}"`,
+        `"${fecha}"`,
+        `"${hora}"`,
+        `"${s.cashierName.replace(/"/g, '""')}"`,
+        `"${s.cashierRole}"`,
+        `"${(s.tableName || 'Mostrador').replace(/"/g, '""')}"`,
+        `"${(s.customerName || 'Consumidor Final').replace(/"/g, '""')}"`,
+        totalCups,
+        `"${itemsDetail.replace(/"/g, '""')}"`,
+        s.subtotal,
+        s.discount,
+        s.total,
+        `"${s.paymentMethod}"`,
+        s.amountPaid,
+        s.change,
+        s.totalCostEstimate,
+        s.profitEstimate,
+        `"${s.status}"`,
+        `"${(s.cancellationReason || '').replace(/"/g, '""')}"`,
+      ];
+    });
 
-    const encodedUri = encodeURI(csvContent);
+    // \uFEFF Byte Order Mark ensures Microsoft Excel displays UTF-8 (accents, tildes, ñ) correctly
+    const csvContent = '\uFEFF' + [headers.join(';'), ...rows.map((r) => r.join(';'))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `ICE_GRANIZADOS_Reporte_${selectedDate}.csv`);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportDayCSV = () => {
+    exportSalesToCSV(daySales, `ICE_GRANIZADOS_Ventas_${selectedDate}.csv`);
+  };
+
+  const handleExportAllHistoryCSV = () => {
+    exportSalesToCSV(sales, `ICE_GRANIZADOS_Historial_Completo_${new Date().toISOString().slice(0, 10)}.csv`);
   };
 
   const handleAnnulClick = (saleId: string) => {
@@ -541,12 +581,21 @@ export const DailyReportView: React.FC<DailyReportViewProps> = ({
           </button>
 
           <button
-            onClick={handleExportCSV}
-            className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all"
-            title="Exportar ventas del día a CSV"
+            onClick={handleExportDayCSV}
+            className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all active:scale-95"
+            title="Exportar facturas de la fecha seleccionada a CSV"
           >
             <Download className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Exportar CSV</span>
+            <span>Exportar Día (CSV)</span>
+          </button>
+
+          <button
+            onClick={handleExportAllHistoryCSV}
+            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300 text-xs font-bold shadow-[0_0_15px_rgba(16,185,129,0.25)] transition-all active:scale-95"
+            title="Exportar todo el historial de ventas para manejar en Excel"
+          >
+            <FileText className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Historial a Excel (CSV)</span>
           </button>
         </div>
       </div>

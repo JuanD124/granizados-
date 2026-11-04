@@ -23,7 +23,7 @@ import {
   X,
   Check,
 } from 'lucide-react';
-import { AuthState, InventoryItem, Sale, GranizadoSize } from '../types';
+import { AuthState, InventoryItem, Sale, GranizadoSize, GranizadoSizeConfig } from '../types';
 import { calculateAccumulatedMetrics, formatCOP } from '../utils/billing';
 import { SIZE_CONFIGS, SUGGESTED_INVENTORY_TEMPLATES, NEON_COLOR_PALETTE } from '../utils/constants';
 import { sounds } from '../utils/audio';
@@ -35,6 +35,8 @@ interface AdminPanelProps {
   onUpdateInventory: (updated: InventoryItem[]) => void;
   sales: Sale[];
   onResetData: () => void;
+  sizeConfigs?: Record<string, GranizadoSizeConfig>;
+  onUpdateSizeConfigs?: (updated: Record<string, GranizadoSizeConfig>) => void;
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
@@ -44,9 +46,102 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onUpdateInventory,
   sales,
   onResetData,
+  sizeConfigs = SIZE_CONFIGS,
+  onUpdateSizeConfigs,
 }) => {
   // Tabs inside admin
-  const [activeAdminTab, setActiveAdminTab] = useState<'metrics' | 'insumos' | 'security' | 'backup'>('metrics');
+  const [activeAdminTab, setActiveAdminTab] = useState<'metrics' | 'prices' | 'insumos' | 'security' | 'backup'>('metrics');
+
+  // Price configuration state for 12oz, 14oz, and 16oz
+  const [price12, setPrice12] = useState<number>(sizeConfigs['12oz']?.price ?? 12000);
+  const [price14, setPrice14] = useState<number>(sizeConfigs['14oz']?.price ?? 14000);
+  const [price16, setPrice16] = useState<number>(sizeConfigs['16oz']?.price ?? 16000);
+  const [pricesSavedMsg, setPricesSavedMsg] = useState<string | null>(null);
+  const [isSavingPrices, setIsSavingPrices] = useState<boolean>(false);
+
+  // Keep price inputs in sync if sizeConfigs prop updates
+  React.useEffect(() => {
+    if (sizeConfigs['12oz']) setPrice12(sizeConfigs['12oz'].price);
+    if (sizeConfigs['14oz']) setPrice14(sizeConfigs['14oz'].price);
+    if (sizeConfigs['16oz']) setPrice16(sizeConfigs['16oz'].price);
+  }, [sizeConfigs]);
+
+  const handleSavePrices = async (e: React.FormEvent) => {
+    e.preventDefault();
+    sounds.playClick();
+    setIsSavingPrices(true);
+
+    const updated: Record<string, GranizadoSizeConfig> = {
+      ...sizeConfigs,
+      '12oz': {
+        ...sizeConfigs['12oz'],
+        id: '12oz',
+        name: sizeConfigs['12oz']?.name || 'Granizado 12 Onzas (Pequeño)',
+        ounces: 12,
+        price: Math.max(100, Number(price12) || 12000),
+        costEstimate: sizeConfigs['12oz']?.costEstimate || 3200,
+        iceGrams: 300,
+        syrupMl: 60,
+        cupStockKey: 'vaso-12oz',
+        lidStockKey: 'tapa-12oz',
+      },
+      '14oz': {
+        ...sizeConfigs['14oz'],
+        id: '14oz',
+        name: sizeConfigs['14oz']?.name || 'Granizado 14 Onzas (Mediano)',
+        ounces: 14,
+        price: Math.max(100, Number(price14) || 14000),
+        costEstimate: sizeConfigs['14oz']?.costEstimate || 3900,
+        iceGrams: 380,
+        syrupMl: 75,
+        cupStockKey: 'vaso-14oz',
+        lidStockKey: 'tapa-14oz',
+      },
+      '16oz': {
+        ...sizeConfigs['16oz'],
+        id: '16oz',
+        name: sizeConfigs['16oz']?.name || 'Granizado 16 Onzas (Grande)',
+        ounces: 16,
+        price: Math.max(100, Number(price16) || 16000),
+        costEstimate: sizeConfigs['16oz']?.costEstimate || 4600,
+        iceGrams: 450,
+        syrupMl: 90,
+        cupStockKey: 'vaso-16oz',
+        lidStockKey: 'tapa-16oz',
+      },
+    };
+
+    if (onUpdateSizeConfigs) {
+      onUpdateSizeConfigs(updated);
+    }
+
+    try {
+      await Promise.all([
+        fetch('/api/price-configs/12oz', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ price: updated['12oz'].price }),
+        }),
+        fetch('/api/price-configs/14oz', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ price: updated['14oz'].price }),
+        }),
+        fetch('/api/price-configs/16oz', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ price: updated['16oz'].price }),
+        }),
+      ]);
+    } catch (err) {
+      console.error('Failed to sync prices to Cloud SQL:', err);
+    }
+
+    sounds.playSuccess();
+    setIsSavingPrices(false);
+    setPricesSavedMsg('¡Precios actualizados! Los nuevos montos para 12oz, 14oz y 16oz se reflejan automáticamente en el POS.');
+    setTimeout(() => setPricesSavedMsg(null), 4000);
+  };
 
   // Insumos creation modal state
   const [isAddInsumoModalOpen, setIsAddInsumoModalOpen] = useState(false);
@@ -260,6 +355,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             }`}
           >
             Ganancias Acumuladas
+          </button>
+          <button
+            onClick={() => {
+              sounds.playClick();
+              setActiveAdminTab('prices');
+            }}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              activeAdminTab === 'prices'
+                ? 'bg-fuchsia-600 text-white shadow-[0_0_12px_rgba(217,70,239,0.4)]'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            💰 Configuración de Precios
           </button>
           <button
             onClick={() => {
@@ -772,6 +880,282 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* TAB: CONFIGURACIÓN DE PRECIOS */}
+      {activeAdminTab === 'prices' && (
+        <div className="bg-slate-900/90 rounded-3xl p-6 sm:p-8 border border-slate-800 shadow-xl max-w-4xl mx-auto space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3">
+              <div className="p-3 rounded-2xl bg-cyan-950 text-cyan-400 border border-cyan-500/30 shadow-[0_0_15px_rgba(0,242,254,0.3)]">
+                <DollarSign className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  Configuración de Precios Base
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-500/40 uppercase">
+                    POS en Tiempo Real
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Edita los montos base para los vasos de 12, 14 y 16 onzas. Los cambios se guardan y reflejan automáticamente en la facturación POS.
+                </p>
+              </div>
+            </div>
+
+            <span className="text-xs text-slate-400 font-mono bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
+              Moneda: COP ($)
+            </span>
+          </div>
+
+          {pricesSavedMsg && (
+            <div className="p-4 rounded-2xl bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 text-xs font-bold flex items-center space-x-3 shadow-[0_0_20px_rgba(16,185,129,0.3)] animate-in fade-in">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+              <span>{pricesSavedMsg}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSavePrices} className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              {/* 12 Onzas */}
+              <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 hover:border-cyan-500/40 transition-all flex flex-col justify-between space-y-4">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-black text-white">Vaso 12 Onzas</span>
+                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-cyan-950/80 text-cyan-300 border border-cyan-500/30">
+                      Pequeño
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Costo est. insumos: ~{formatCOP(sizeConfigs['12oz']?.costEstimate || 3200)}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-cyan-400 block uppercase tracking-wider">
+                    Precio Base Venta:
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 font-bold">$</span>
+                    <input
+                      type="number"
+                      step={500}
+                      min={1000}
+                      required
+                      value={price12}
+                      onChange={(e) => setPrice12(Math.max(0, Number(e.target.value)))}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-8 pr-4 py-2.5 text-lg font-mono font-black text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+
+                  {/* Profit estimate preview */}
+                  <div className="flex justify-between items-center text-[11px] text-slate-400 pt-1">
+                    <span>Margen est.:</span>
+                    <span className="font-mono font-bold text-emerald-400">
+                      +{formatCOP(Math.max(0, price12 - (sizeConfigs['12oz']?.costEstimate || 3200)))}
+                    </span>
+                  </div>
+
+                  {/* Quick Adjust Buttons */}
+                  <div className="grid grid-cols-4 gap-1 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setPrice12((p) => Math.max(1000, p - 1000))}
+                      className="py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-mono text-slate-300 border border-slate-800"
+                    >
+                      -1k
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrice12((p) => Math.max(1000, p - 500))}
+                      className="py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-mono text-slate-300 border border-slate-800"
+                    >
+                      -500
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrice12((p) => p + 500)}
+                      className="py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-mono text-slate-300 border border-slate-800"
+                    >
+                      +500
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrice12((p) => p + 1000)}
+                      className="py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-mono text-cyan-300 border border-slate-800"
+                    >
+                      +1k
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 14 Onzas */}
+              <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 hover:border-cyan-500/40 transition-all flex flex-col justify-between space-y-4">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-black text-white">Vaso 14 Onzas</span>
+                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-blue-950/80 text-blue-300 border border-blue-500/30">
+                      Mediano
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Costo est. insumos: ~{formatCOP(sizeConfigs['14oz']?.costEstimate || 3900)}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-cyan-400 block uppercase tracking-wider">
+                    Precio Base Venta:
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 font-bold">$</span>
+                    <input
+                      type="number"
+                      step={500}
+                      min={1000}
+                      required
+                      value={price14}
+                      onChange={(e) => setPrice14(Math.max(0, Number(e.target.value)))}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-8 pr-4 py-2.5 text-lg font-mono font-black text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+
+                  {/* Profit estimate preview */}
+                  <div className="flex justify-between items-center text-[11px] text-slate-400 pt-1">
+                    <span>Margen est.:</span>
+                    <span className="font-mono font-bold text-emerald-400">
+                      +{formatCOP(Math.max(0, price14 - (sizeConfigs['14oz']?.costEstimate || 3900)))}
+                    </span>
+                  </div>
+
+                  {/* Quick Adjust Buttons */}
+                  <div className="grid grid-cols-4 gap-1 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setPrice14((p) => Math.max(1000, p - 1000))}
+                      className="py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-mono text-slate-300 border border-slate-800"
+                    >
+                      -1k
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrice14((p) => Math.max(1000, p - 500))}
+                      className="py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-mono text-slate-300 border border-slate-800"
+                    >
+                      -500
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrice14((p) => p + 500)}
+                      className="py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-mono text-slate-300 border border-slate-800"
+                    >
+                      +500
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrice14((p) => p + 1000)}
+                      className="py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-mono text-cyan-300 border border-slate-800"
+                    >
+                      +1k
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 16 Onzas */}
+              <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 hover:border-cyan-500/40 transition-all flex flex-col justify-between space-y-4">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-black text-white">Vaso 16 Onzas</span>
+                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-fuchsia-950/80 text-fuchsia-300 border border-fuchsia-500/30">
+                      Grande
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Costo est. insumos: ~{formatCOP(sizeConfigs['16oz']?.costEstimate || 4600)}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-cyan-400 block uppercase tracking-wider">
+                    Precio Base Venta:
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 font-bold">$</span>
+                    <input
+                      type="number"
+                      step={500}
+                      min={1000}
+                      required
+                      value={price16}
+                      onChange={(e) => setPrice16(Math.max(0, Number(e.target.value)))}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-8 pr-4 py-2.5 text-lg font-mono font-black text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+
+                  {/* Profit estimate preview */}
+                  <div className="flex justify-between items-center text-[11px] text-slate-400 pt-1">
+                    <span>Margen est.:</span>
+                    <span className="font-mono font-bold text-emerald-400">
+                      +{formatCOP(Math.max(0, price16 - (sizeConfigs['16oz']?.costEstimate || 4600)))}
+                    </span>
+                  </div>
+
+                  {/* Quick Adjust Buttons */}
+                  <div className="grid grid-cols-4 gap-1 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setPrice16((p) => Math.max(1000, p - 1000))}
+                      className="py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-mono text-slate-300 border border-slate-800"
+                    >
+                      -1k
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrice16((p) => Math.max(1000, p - 500))}
+                      className="py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-mono text-slate-300 border border-slate-800"
+                    >
+                      -500
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrice16((p) => p + 500)}
+                      className="py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-mono text-slate-300 border border-slate-800"
+                    >
+                      +500
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrice16((p) => p + 1000)}
+                      className="py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-mono text-cyan-300 border border-slate-800"
+                    >
+                      +1k
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* POS Sync Confirmation Banner */}
+            <div className="p-4 rounded-2xl bg-cyan-950/40 border border-cyan-500/30 flex items-center justify-between text-xs text-slate-300">
+              <div className="flex items-center space-x-2">
+                <Check className="w-4 h-4 text-cyan-400 shrink-0" />
+                <span>
+                  Al pulsar guardar, los montos se sincronizan con Cloud SQL y el POS actualizará inmediatamente los botones y totales de facturación.
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSavingPrices}
+              className="w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-400 via-blue-500 to-fuchsia-600 hover:opacity-95 text-slate-950 font-black text-sm shadow-[0_0_25px_rgba(0,242,254,0.35)] transition-all active:scale-[0.99] disabled:opacity-50"
+            >
+              {isSavingPrices ? 'Guardando en Base de Datos...' : 'Guardar y Aplicar Precios en POS'}
+            </button>
+          </form>
         </div>
       )}
 

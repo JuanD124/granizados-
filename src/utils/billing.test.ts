@@ -11,6 +11,7 @@ import {
   verifyPin,
   verifyLoginCredentials,
   formatCOP,
+  calculateOpenAccountsSummary,
 } from './billing';
 import { CartItem, InventoryItem, Sale } from '../types';
 
@@ -25,6 +26,16 @@ test('calculateItemUnitPrice returns base prices: 12k for 12oz, 14k for 14oz, 16
     { price: 1000 },
   ]);
   assert.equal(withToppings, 14500);
+
+  // With custom dynamic sizeConfigs (e.g. from Admin Price Configuration)
+  const customConfigs = {
+    '12oz': { price: 13500 },
+    '14oz': { price: 15500 },
+    '16oz': { price: 17500 },
+  };
+  assert.equal(calculateItemUnitPrice('12oz', [], customConfigs), 13500);
+  assert.equal(calculateItemUnitPrice('14oz', [{ price: 1000 }], customConfigs), 16500);
+  assert.equal(calculateItemUnitPrice('16oz', [], customConfigs), 17500);
 });
 
 test('calculateCartSummary computes subtotal and discount correctly', () => {
@@ -308,3 +319,33 @@ test('formatCOP produces formatted currency string', () => {
   const formatted = formatCOP(12000);
   assert.ok(formatted.includes('12.000') || formatted.includes('12,000'));
 });
+
+test('calculateOpenAccountsSummary correctly tallies pending accounts and totals', () => {
+  const mockTables = [
+    {
+      id: 'cuenta-1',
+      name: 'Juan Carlos',
+      cart: [
+        { unitPrice: 12000, quantity: 2 },
+        { unitPrice: 16000, quantity: 1 },
+      ],
+    },
+    {
+      id: 'cuenta-2',
+      name: 'Laura Gómez',
+      cart: [],
+    },
+    {
+      id: 'cuenta-3',
+      name: 'Mostrador',
+      cart: [{ unitPrice: 14000, quantity: 1 }],
+    },
+  ];
+
+  const summary = calculateOpenAccountsSummary(mockTables as any);
+  assert.equal(summary.totalAccounts, 3);
+  assert.equal(summary.activeAccountsWithOrders, 2);
+  assert.equal(summary.totalPendingGranizados, 4); // 2 + 1 + 1
+  assert.equal(summary.totalPendingAmount, 54000); // 24000 + 16000 + 14000
+});
+
